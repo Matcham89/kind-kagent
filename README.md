@@ -213,7 +213,7 @@ Substrate lives in the `ate-system` namespace — its API group is `ate.dev`, so
 
 ### Substrate does NOT work on a vanilla Kind cluster
 
-Two prerequisites are easy to miss, and both fail the same silent way — every
+Six prerequisites are easy to miss. The first two fail the same silent way — every
 substrate pod sits in `ContainerCreating` forever with:
 
 ```
@@ -275,6 +275,48 @@ Verify:
 ```bash
 kubectl get clustertrustbundles          # expect the two podcert.ate.dev signers
 kubectl -n ate-system get pods
+```
+
+**3. RBAC: `use` on the podcert signers.** The chart grants its own controller
+`sign`/`attest` on the two `podcert.ate.dev` signers but grants **no workload
+`use`**. Kubernetes silently strips `signerName` — and the whole projected-volume
+source — from a `podCertificate`/`clusterTrustBundle` volume unless the identity
+submitting the pod template holds `use` on that exact signer. No error, no event;
+the pods just come up with empty cert projections.
+`flux/apps/base/substrate/substrate-operator/rbac-podcert-signer-use.yaml`
+grants it to the six `ate-system` ServiceAccounts.
+
+Note `kubectl auth can-i` mis-parses signer names containing `/` and always
+reports `no`. Use a raw SubjectAccessReview:
+
+```bash
+kubectl create --raw /apis/authorization.k8s.io/v1/subjectaccessreviews -f - <<'EOF'
+{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","spec":{
+  "user":"system:serviceaccount:ate-system:default",
+  "resourceAttributes":{"group":"certificates.k8s.io","resource":"signers",
+    "name":"servicedns.podcert.ate.dev/identity","verb":"use"}}}
+EOF
+```
+
+**4. Privileged PSS on both `ate-system` and `kagent`.** `atelet` runs
+`privileged: true`, and the `ateom-gvisor` worker pods — which live in the
+**`kagent`** namespace, not `ate-system` — request `SYS_ADMIN`, `NET_ADMIN`,
+`SYS_PTRACE` and `appArmorProfile: Unconfined`. `SYS_ADMIN` alone is rejected
+under `restricted` *and* `baseline`, so both namespaces use the
+`namespace-privileged` infra component. Missing this on `kagent` means an
+AgentHarness never gets a worker to run on.
+
+**5. `ateomImage` must match the substrate chart version.** `ate-controller` and
+`ateom-gvisor` are components of one release and their worker CLI flags are not a
+cross-version contract — a mismatch crash-loops every worker with `unknown flag`.
+Both are pinned to `0.0.21` / `v0.0.21` here; bump them together.
+
+**6. `user.max_user_namespaces` must be non-zero.** gVisor's `runsc` creates a
+user namespace during sandbox setup. Kind inherits the Docker host's value, so
+check the host:
+
+```bash
+cat /proc/sys/user/max_user_namespaces   # 0 breaks runsc with `exit status 128`
 ```
 
 ### Resource budget on a single Kind node

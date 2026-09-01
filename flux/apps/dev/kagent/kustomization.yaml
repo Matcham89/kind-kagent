@@ -3,9 +3,13 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: kagent
-# kagent uses restricted PSS — no privileged workloads on standalone Kind
+# Privileged PSS. The kagent-default WorkerPool's ateom-gvisor worker pods run
+# in THIS namespace, and while they are not `privileged: true` they do request
+# capabilities.add: [NET_ADMIN, SYS_ADMIN, SYS_CHROOT, SYS_PTRACE, ...] plus
+# appArmorProfile: Unconfined. SYS_ADMIN alone is rejected under both
+# restricted and baseline, so an AgentHarness never gets a worker to run on.
 components:
-  - ../../../infra/namespace
+  - ../../../infra/namespace-privileged
 
 resources:
   - ./crds/ks.yaml
