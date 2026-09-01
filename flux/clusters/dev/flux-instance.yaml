@@ -15,16 +15,21 @@ spec:
     #   /spec/versions/1/.../eventSources/items/properties/kind/enum/-
     # on the notification-controller Receiver CRD. Newer Flux serves only one
     # Receiver version, so index 1 does not exist and the FluxInstance goes
-    # Stalled=BuildFailed installing NO Flux CRDs at all — nothing downstream
-    # reconciles. Confirmed failing on 2.9.x under BOTH operator 0.38.1 and
-    # 0.52.0; confirmed working on 2.6.x. 2.7.x/2.8.x were not tested to a
-    # definitive result — if you bump, wait for a terminal condition and check:
+    # Stalled=BuildFailed having installed NO Flux CRDs at all — nothing
+    # downstream reconciles. Confirmed failing on 2.9.x under both operator
+    # 0.38.1 and 0.52.0, so bumping the operator alone does not help.
+    #
+    # 2.8.x is the newest that builds, and is also the floor for this repo:
+    # the kagent HelmRelease uses spec.install.strategy / spec.upgrade.strategy,
+    # which helm-controller only accepts from v1.5.x (Flux 2.8). On 2.6.x it
+    # fails the dry-run with "field not declared in schema".
+    # Verify after bumping — wait for a terminal condition, do not sample early:
     #   kubectl -n flux-system get fluxinstance flux \
     #     -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}'
     # NOTE: flux/clusters/dev/flux-system/gotk-components.yaml is still v2.9.5
-    # and is now inconsistent with this pin — the operator owns the components,
-    # so it is inert, but regenerate it at 2.6.x when convenient.
-    version: 2.6.x
+    # and inconsistent with this pin. The operator owns the components so it is
+    # inert, but regenerate it at 2.8.x when convenient.
+    version: 2.8.x
     registry: ghcr.io/fluxcd
     artifact: oci://ghcr.io/controlplaneio-fluxcd/flux-operator-manifests
   components:
