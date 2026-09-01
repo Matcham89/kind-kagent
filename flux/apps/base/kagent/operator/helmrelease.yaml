@@ -22,6 +22,8 @@ spec:
     name: kagent
   dependsOn:
     - name: kagent-crds
+    - name: substrate-crds
+      namespace: ate-system
   install:
     strategy:
       name: RetryOnFailure
@@ -37,10 +39,12 @@ spec:
     revisionHistoryLimit: 2
 
     # ==============================================================================
-    # Substrate — DISABLED on standalone Kind
+    # Substrate — ENABLED for AgentHarness support
     # ==============================================================================
     substrateWorkerPool:
-      create: false
+      create: true
+      replicas: 2
+      ateomImage: ghcr.io/kagent-dev/substrate/ateom-gvisor:v0.0.21
 
     # ==============================================================================
     # OTel — DISABLED (no OTel collector on Kind)
@@ -84,7 +88,9 @@ spec:
           cpu: 100m
           memory: 256Mi
       substrate:
-        enabled: false
+        enabled: true
+        ateApiEndpoint: "dns:///api.ate-system.svc:443"
+        ateApiInsecure: true
 
     # ==============================================================================
     # Built-in agents

@@ -1,0 +1,54 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: substrate
+spec:
+  interval: 1m0s
+  url: oci://ghcr.io/kagent-dev/substrate/helm/substrate
+  ref:
+    tag: 0.0.21
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: substrate
+spec:
+  interval: 1m0s
+  releaseName: substrate
+  chartRef:
+    kind: OCIRepository
+    name: substrate
+  dependsOn:
+    - name: substrate-crds
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  # On Kind, rustfs Recreate strategy prevents PV attach deadlocks
+  # on pod restart. Valkey hostname announcement keeps the cluster
+  # healthy after full-cluster restart (e.g. host reboot).
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: StatefulSet
+              name: valkey-cluster
+            patch: |-
+              - op: replace
+                path: /spec/template/spec/containers/0/command
+                value:
+                  - sh
+                  - -c
+                  - >-
+                    exec valkey-server /etc/valkey/valkey.conf
+                    --cluster-announce-hostname "$(hostname).valkey-cluster-service.ate-system.svc.cluster.local"
+                    --cluster-preferred-endpoint-type hostname
+          - target:
+              kind: Deployment
+              name: rustfs
+            patch: |-
+              - op: replace
+                path: /spec/strategy
+                value:
+                  type: Recreate

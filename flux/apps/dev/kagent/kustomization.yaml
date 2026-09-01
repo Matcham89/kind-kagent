@@ -14,3 +14,4 @@ resources:
   - ./providers/ks.yaml
   - ./mcps/ks.yaml
   - ./agents/ks.yaml
+  - ./agent-harnesses/ks.yaml
