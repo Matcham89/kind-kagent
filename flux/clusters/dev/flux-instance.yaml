@@ -1,0 +1,36 @@
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+  annotations:
+    fluxcd.controlplane.io/reconcileEvery: 1h
+    fluxcd.controlplane.io/reconcileTimeout: 5m
+    fluxcd.controlplane.io/reconcileArtifactEvery: 10m
+spec:
+  distribution:
+    version: 2.x
+    registry: ghcr.io/fluxcd
+    artifact: oci://ghcr.io/controlplaneio-fluxcd/flux-operator-manifests
+  components:
+    - source-controller
+    - kustomize-controller
+    - helm-controller
+    - notification-controller
+  cluster:
+    type: kubernetes
+    multitenant: false
+    networkPolicy: true
+    domain: cluster.local
+    size: small
+  sync:
+    kind: GitRepository
+    url: https://github.com/Matcham89/kind-kagent.git
+    ref: refs/heads/main
+    path: flux/clusters/dev
+    interval: 1m
+  kustomize:
+    patches: []
+  wait: true
+  migrateResources: true

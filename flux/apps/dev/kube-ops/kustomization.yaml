@@ -1,0 +1,13 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: kube-ops
+# kube-ops hosts system components (ESO, cert-manager, MetalLB) that
+# need privileged PSS
+components:
+  - ../../../infra/namespace-privileged
+
+resources:
+  - ./external-secrets/operator/ks.yaml
+  - ./external-secrets/store/ks.yaml

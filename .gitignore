@@ -1,0 +1,19 @@
+# Secrets and sensitive files
+*.key
+*.pem
+*.crt
+*.p12
+*.env
+.env.*
+id_rsa*
+
+# Temporary files
+*.tmp
+*.swp
+*~
+.DS_Store
+
+# Local development
+.vscode/
+.idea/
+*.log

@@ -1,0 +1,16 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: kagent
+# kagent uses restricted PSS — no privileged workloads on standalone Kind
+components:
+  - ../../../infra/namespace
+
+resources:
+  - ./crds/ks.yaml
+  - ./operator/ks.yaml
+  - ./secrets/ks.yaml
+  - ./providers/ks.yaml
+  - ./mcps/ks.yaml
+  - ./agents/ks.yaml

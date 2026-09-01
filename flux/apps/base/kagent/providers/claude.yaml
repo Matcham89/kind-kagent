@@ -1,0 +1,43 @@
+# ==============================================================================
+# Claude / Anthropic — Direct API access
+# ==============================================================================
+# Uses provider: Anthropic to talk directly to api.anthropic.com.
+# No agentgateway involved. Requires ANTHROPIC_API_KEY secret.
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: claude-sonnet-config
+  namespace: kagent
+spec:
+  apiKeySecret: kagent-anthropic
+  apiKeySecretKey: ANTHROPIC_API_KEY
+  model: claude-sonnet-4-5-20250929
+  provider: Anthropic
+  anthropic:
+    baseUrl: https://api.anthropic.com/v1
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: claude-opus-config
+  namespace: kagent
+spec:
+  apiKeySecret: kagent-anthropic
+  apiKeySecretKey: ANTHROPIC_API_KEY
+  model: claude-opus-4-5
+  provider: Anthropic
+  anthropic:
+    baseUrl: https://api.anthropic.com/v1
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: claude-haiku-config
+  namespace: kagent
+spec:
+  apiKeySecret: kagent-anthropic
+  apiKeySecretKey: ANTHROPIC_API_KEY
+  model: claude-haiku-4-5-20251001
+  provider: Anthropic
+  anthropic:
+    baseUrl: https://api.anthropic.com/v1
