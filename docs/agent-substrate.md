@@ -7,6 +7,11 @@ on a single-node Kind cluster.
 Three things, in order: **what is pinned**, **why it is pinned there**, and the
 **caveats** that were needed to get a chat working end-to-end.
 
+> Porting this to Talos / home-cluster? See
+> [`substrate-on-talos.md`](substrate-on-talos.md) — a self-contained handover
+> covering what transfers, what does not, and which of home-cluster's recorded
+> blockers turn out to be substrate version artifacts rather than Talos issues.
+
 ---
 
 ## 1. Pinned versions

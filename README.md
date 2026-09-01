@@ -211,6 +211,7 @@ Substrate lives in `ate-system` — its API group is `ate.dev`, so `ate-*`,
 `atelet` and `atenet` are the real upstream names, not truncated ones.
 
 **Full detail, including every pinned version and why: [`docs/agent-substrate.md`](docs/agent-substrate.md).**
+Porting to Talos: [`docs/substrate-on-talos.md`](docs/substrate-on-talos.md).
 
 The one thing to know before touching any version here:
 
@@ -253,7 +254,8 @@ kind-kagent/
 ├── kind-config.yaml                # Kind cluster config (see note below)
 ├── .gitignore                      # ignores .bitwarden-token and bin/
 ├── docs/
-│   └── agent-substrate.md          # substrate/AgentHarness: pins, rationale, caveats
+│   ├── agent-substrate.md          # substrate/AgentHarness: pins, rationale, caveats, audit
+│   └── substrate-on-talos.md       # handover: porting this to Talos / home-cluster
 └── flux/                           # canonical GitOps tree — everything else lives here
     ├── CLAUDE.md
     ├── clusters/dev/               # Flux entrypoint: FluxInstance + root Kustomization
