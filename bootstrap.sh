@@ -129,7 +129,7 @@ echo "=== Step 0d: Agent Substrate bootstrap ==="
 echo "=== Step 1: Install Flux Operator ==="
 helm upgrade --install flux-operator \
   oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator \
-  --version=0.38.1 \
+  --version=0.52.0 \
   --namespace flux-system \
   --create-namespace \
   --wait \

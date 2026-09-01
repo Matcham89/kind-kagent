@@ -10,15 +10,21 @@ metadata:
     fluxcd.controlplane.io/reconcileArtifactEvery: 10m
 spec:
   distribution:
-    # Pinned, not "2.x". The flux-operator applies its own patches to the Flux
-    # CRDs it installs, and a floating range silently picks up a newer Flux
-    # whose CRD shape those patches no longer fit. On 2.x this stalled the
-    # FluxInstance outright with:
-    #   add operation does not apply: doc is missing path:
-    #   "/spec/versions/1/.../eventSources/items/properties/kind/enum/-"
-    # because the Receiver CRD dropped a served version. Keep this in step with
-    # flux/clusters/dev/flux-system/gotk-components.yaml (currently v2.9.5).
-    version: 2.9.x
+    # Pinned, not "2.x". flux-operator patches the Flux CRDs it installs, and
+    # one patch adds an enum value at
+    #   /spec/versions/1/.../eventSources/items/properties/kind/enum/-
+    # on the notification-controller Receiver CRD. Newer Flux serves only one
+    # Receiver version, so index 1 does not exist and the FluxInstance goes
+    # Stalled=BuildFailed installing NO Flux CRDs at all — nothing downstream
+    # reconciles. Confirmed failing on 2.9.x under BOTH operator 0.38.1 and
+    # 0.52.0; confirmed working on 2.6.x. 2.7.x/2.8.x were not tested to a
+    # definitive result — if you bump, wait for a terminal condition and check:
+    #   kubectl -n flux-system get fluxinstance flux \
+    #     -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}'
+    # NOTE: flux/clusters/dev/flux-system/gotk-components.yaml is still v2.9.5
+    # and is now inconsistent with this pin — the operator owns the components,
+    # so it is inert, but regenerate it at 2.6.x when convenient.
+    version: 2.6.x
     registry: ghcr.io/fluxcd
     artifact: oci://ghcr.io/controlplaneio-fluxcd/flux-operator-manifests
   components:
