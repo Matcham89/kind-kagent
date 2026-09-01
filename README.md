@@ -207,180 +207,40 @@ kubectl delete namespace kagent
 
 Substrate and the `hermes-shell` AgentHarness are deployed by Flux from
 `flux/apps/base/substrate/` and `flux/apps/base/kagent/agent-harnesses/`.
-Substrate lives in the `ate-system` namespace — its API group is `ate.dev`, so
-`ate-*` / `atelet` / `atenet` are the real upstream names, not truncated ones.
+Substrate lives in `ate-system` — its API group is `ate.dev`, so `ate-*`,
+`atelet` and `atenet` are the real upstream names, not truncated ones.
 
-### The kagent <-> substrate version pairing is load-bearing
+**Full detail, including every pinned version and why: [`docs/agent-substrate.md`](docs/agent-substrate.md).**
 
-**kagent 0.10.0-rc3 and rc5 both vendor the substrate Go module `v0.0.9`**:
+The one thing to know before touching any version here:
 
-```
-# kagent go/go.mod
-replace github.com/agent-substrate/substrate => github.com/kagent-dev/substrate v0.0.9
-```
-
-So kagent's `ateapi` gRPC client speaks v0.0.9's protobuf, and substrate must be
-**0.0.9** to match. This is the single most expensive thing to get wrong,
-because *everything looks healthy* when it is: the AgentHarness reports
-`Ready=True`, the ActorTemplate reaches `phase: Ready` with a golden snapshot,
-gVisor sandboxes run. Only chatting fails, as a bare "An error occurred" in the
-UI. The real error is in the controller:
-
-```
-ensure session actor failed ... substrate GetActor "ahr-kagent-<name>":
-  rpc error: code = Internal desc = grpc: failed to unmarshal the received
-  message: string field contains invalid UTF-8
-```
-
-Note it is purely client-side — `ate-api-server` logs the same call with
-`err=null`, and a `kubectl-ate` built from substrate `main` decodes the
-identical response fine.
-
-Neighbouring versions fail in opposite directions, so there is no room to drift:
-
-| substrate | Result with kagent 0.10.0-rc3 |
-|---|---|
-| **0.0.9** | **correct pairing** — CRDs ship `valueFrom` + `pauseImage` + `ateomImage` natively |
-| 0.0.21 | ActorTemplate CRD lacks `valueFrom`/`pauseImage` (needs a postRenderer), and `GetActor` fails to decode |
-| 0.0.22 | WorkerPool CRD drops `spec.ateomImage`, which every current kagent chart sets and hard-fails without |
-
-If you bump either side, bump both, and verify by actually opening a chat — not
-by checking that the harness is `Ready`.
-
-### auth.mode: jwt vs mtls
-
-substrate 0.0.9 has an `auth.mode` value that changes the cluster's
-requirements substantially. This repo uses **jwt**:
-
-| | `jwt` (used here) | `mtls` |
-|---|---|---|
-| Feature gates in `kind-config.yaml` | not required | required |
-| CA pools / `podcertificate-controller` | not rendered at all | must be created out of band |
-| Key material | chart self-bootstraps `ateapi-tls`, `session-id-jwt-pool`, `session-id-ca-pool` | manual |
-| Secret naming | `session-id-*` | `service-dns-ca-pool`, `pod-identity-ca-pool`, `session-id-*` |
-
-Switching to `mtls` is therefore not just a value change: you would need the
-`kind-config.yaml` feature gates (already present) **and** to create
-`service-dns-ca-pool`, `pod-identity-ca-pool` and the `session-id-*` pools
-yourself with `kubectl ate admin make-ca-pool` / `make-jwt-pool` from the
-[substrate repo](https://github.com/agent-substrate/substrate), whose
-`hack/install-ate.sh` is the reference for those commands. There is no script
-for that here — the one this repo used to carry targeted 0.0.21's `actor-id-*`
-naming and was deleted rather than left to rot.
-
-0.0.9 also uses **valkey rather than postgres**, so the 1-CPU postgres request
-is gone and the chart declares no CPU requests at all.
-
-### Recovering a wedged AgentHarness
-
-Deleting an `ActorTemplate` while a session actor still references its old
-golden snapshot leaves that actor stuck in `Resuming` forever:
-
-```
-ResumeActor: invalid snapshot URI prefix "<uuid>": missing bucket
-```
-
-The actor pins a worker, and the AgentHarness then cannot be deleted either —
-its `kagent.dev/agent-harness-backend-cleanup` finalizer hangs on
-`substrate cleanup exceeded timeout`. To recover:
-
-```bash
-# 1. Break the stale worker assignment; the pool recreates the pod.
-#    The actor drops from Resuming to Suspended.
-kubectl -n kagent delete pod <the worker pod holding the actor>
-
-# 2. Clear the owned template, then the stuck finalizer.
-kubectl -n kagent delete actortemplate <name>
-kubectl -n kagent patch agentharness <name> --type=merge -p '{"metadata":{"finalizers":null}}'
-
-# 3. Let Flux recreate it; a fresh golden snapshot is taken.
-flux reconcile kustomization kagent-agent-harnesses -n kagent
-```
-
-Each running actor occupies one whole worker, and a harness transiently needs
-two (golden + session), so keep `substrateWorkerPool.replicas` comfortably
-above the number of harnesses or the ate-controller loops on
-`FailedPrecondition desc = no free workers available`.
-
-### Verifying chat actually works
-
-`Ready=True` on the AgentHarness is not sufficient. Exercise the real path:
-
-```bash
-kubectl -n kagent port-forward svc/kagent-controller 18083:8083 &
-
-# Expect HTTP 101 (websocket upgrade), not 503.
-curl -s -o /dev/null -w '%{http_code}\n' --max-time 20 \
-  -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
-  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-  http://127.0.0.1:18083/api/agentharnesses/kagent/hermes-shell/acp/new
-
-# The session actor should reach Running on a worker.
-curl -s http://127.0.0.1:18083/api/substrate/status | python3 -m json.tool
-```
-
-### Resource budget on a single Kind node
-
-A 4-vCPU node is genuinely tight. Substrate's only significant CPU *request* is
-its postgres, which asks for a **full CPU** — so it is the first thing to go
-`Pending` with `Insufficient cpu`. Everything else in the substrate chart is
-request-less.
-
-**All built-in kagent agents and all declarative agents are disabled** on this
-cluster; it exists to run the hermes AgentHarness. That frees roughly 1.2 vCPU.
-
-> **Gotcha:** the built-in agents are Helm **subcharts**, gated by
-> `condition: <name>-agent.enabled` in the kagent `Chart.yaml`. Each key must
-> therefore sit at the **top level** of `values:`. Nesting them under an
-> `agents:` map is silently ignored by Helm and every agent stays at its chart
-> default of `enabled: true`. Verify a change actually took effect:
+> **kagent vendors the substrate Go module, so the two versions are a matched
+> pair.** kagent `0.10.0-rc3` pins substrate `v0.0.9` in its `go.mod`. Run a
+> different substrate and the AgentHarness still reports `Ready=True`, the
+> ActorTemplate still takes a golden snapshot, gVisor sandboxes still run — and
+> chat fails with a bare "An error occurred". Derive the correct version:
 >
 > ```bash
-> helm template kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent \
->   --version 0.10.0-rc3 -f your-values.yaml \
->   | grep '^# Source: kagent/charts/'
+> curl -sS https://raw.githubusercontent.com/kagent-dev/kagent/refs/tags/v<VER>/go/go.mod | grep substrate
 > ```
+>
+> Bump both together, keep `substrateWorkerPool.ateomImage` on the same
+> substrate version, and verify by **opening a chat** — not by checking `Ready`.
 
-If postgres still will not schedule, lower its request:
-
-```yaml
-# flux/apps/base/substrate/substrate-operator/helmrelease.yaml
-spec:
-  values:
-    postgres:
-      resources:
-        requests:
-          cpu: 250m
-```
-
-To bring the declarative `k8s-*` agents back, rename
-`flux/apps/dev/kagent/agents/ks.yaml.disabled` to `ks.yaml` and uncomment it in
-`flux/apps/dev/kagent/kustomization.yaml`. On a 4-vCPU node they need
-right-sizing via `spec.declarative.deployment.resources` (the default is
-`100m`/`384Mi` each, ×7).
-
-### AgentHarness
-
-`AgentHarness` provisions a long-running coding-agent sandbox on substrate
-rather than a kagent-managed runtime. `hermes-shell` uses the `hermes` backend
-and the `kagent-default` WorkerPool (created by the kagent chart via
-`substrateWorkerPool.create=true`; the name is the chart default and must match
-`spec.substrate.workerPoolRef.name`).
-
-Harnesses speak the Agent Client Protocol (ACP) over JSON-RPC: an in-sandbox
-`acp-shim` bridges the agent's stdio to a WebSocket the kagent controller
-exposes as an ordinary agent in the UI. It reports two conditions, `Accepted`
-(kagent accepted the spec) and `Ready` (the ActorTemplate snapshot is live).
+Current pairing: kagent `0.10.0-rc3` <-> substrate `0.0.9`, `auth.mode: jwt`.
 
 ```bash
-kubectl -n kagent get agentharness hermes-shell -o yaml
-kubectl -n kagent get actortemplates
-kubectl -n kagent get workerpool kagent-default
+kubectl -n kagent get agentharness,workerpool,actortemplate
+kubectl -n ate-system get pods
 ```
 
-Docs: [Agent Substrate](https://kagent.dev/docs/kagent/concepts/agent-substrate/) ·
-[Agent Harness](https://kagent.dev/docs/kagent/concepts/agent-harness/) ·
-[architecture](https://github.com/agent-substrate/substrate/blob/main/docs/architecture.md)
+`AgentHarness` provisions a long-running coding-agent sandbox on substrate
+rather than a kagent-managed runtime. It speaks the Agent Client Protocol
+(ACP): an in-sandbox `acp-shim` bridges the agent's stdio to a WebSocket the
+kagent controller exposes as an ordinary agent in the UI. The sandboxed hermes
+is a real Hermes 0.19.0 with shell, file, skills, memory and delegation tools,
+but **no web search and no browser tools**, and it serves **one chat session at
+a time** — see the doc for specifics.
 
 ---
 
@@ -392,6 +252,8 @@ kind-kagent/
 ├── bootstrap.sh                    # Kind cluster + Flux Operator bootstrap
 ├── kind-config.yaml                # Kind cluster config (see note below)
 ├── .gitignore                      # ignores .bitwarden-token and bin/
+├── docs/
+│   └── agent-substrate.md          # substrate/AgentHarness: pins, rationale, caveats
 └── flux/                           # canonical GitOps tree — everything else lives here
     ├── CLAUDE.md
     ├── clusters/dev/               # Flux entrypoint: FluxInstance + root Kustomization
@@ -406,9 +268,9 @@ kind-kagent/
         └── kube-ops/
 ```
 
-`kind-config.yaml` is not strictly required in the current `auth.mode: jwt`
-setup — it carries the `ClusterTrustBundle` / `PodCertificateRequest` feature
-gates that only `mtls` needs. It is kept because those gates **cannot be added
-to a running kind cluster**, so dropping them would mean rebuilding the cluster
-to switch modes. It also sets parallel image pulls, which substrate's image
-pulls benefit from.
+`kind-config.yaml` is not strictly required with `auth.mode: jwt` — it carries
+the `ClusterTrustBundle` / `PodCertificateRequest` feature gates that only
+`mtls` needs. It is kept because those gates **cannot be added to a running
+kind cluster**, so dropping them would mean rebuilding to switch modes. It also
+sets parallel image pulls, which substrate benefits from. See
+[`docs/agent-substrate.md`](docs/agent-substrate.md).

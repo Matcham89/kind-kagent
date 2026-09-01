@@ -112,7 +112,7 @@ Currently kagent `0.10.0-rc3` <-> substrate `0.0.9`. Bump both together, and
 keep `substrateWorkerPool.ateomImage` on the same substrate version. Substrate
 runs `auth.mode: jwt`, which self-bootstraps its key material.
 
-See the README for the full failure modes.
+See [docs/agent-substrate.md](../docs/agent-substrate.md) for the full failure modes.
 
 ## Secret Management
 
