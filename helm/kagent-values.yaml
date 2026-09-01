@@ -1,0 +1,100 @@
+# ==============================================================================
+# kagent Helm values — Standalone Kind deployment
+# ==============================================================================
+# Adapts the home-cluster values for a fresh Kind cluster:
+#   - Substrate DISABLED (no gVisor sandboxes — the Talos compatibility issue)
+#   - OTel tracing/logging DISABLED (no OTel collector on Kind)
+#   - No substrateWorkerPool (requires Substrate CRDs)
+#   - Resource limits relaxed for local development
+#   - Built-in agents: k8s (enabled), promql (enabled), helm (enabled),
+#     observability (enabled), kgateway (disabled on Kind)
+# ==============================================================================
+
+# Default model provider — change if you have OpenAI instead of Anthropic
+default: anthropic
+
+revisionHistoryLimit: 2
+
+# ==============================================================================
+# Substrate — DISABLED entirely
+# ==============================================================================
+# Substrate + gVisor sandboxes are the root cause of the Talos compatibility
+# issues. On a dedicated Kind machine, we run kagent without sandboxed
+# AgentHarnesses. The controller's built-in agents (k8s, promql, helm) don't
+# need substrate.
+substrateWorkerPool:
+  create: false
+
+# ==============================================================================
+# OTel — DISABLED (no OTel collector on Kind)
+# ==============================================================================
+otel:
+  tracing:
+    enabled: false
+    exporter:
+      otlp: {}
+  logging:
+    enabled: false
+    exporter:
+      otlp: {}
+
+# ==============================================================================
+# Resources — relaxed for local dev on a dedicated machine
+# ==============================================================================
+resources:
+  limits:
+    memory: 4Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 1000
+
+podSecurityContext:
+  fsGroup: 1000
+
+# ==============================================================================
+# Controller
+# ==============================================================================
+controller:
+  resources:
+    limits:
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  substrate:
+    enabled: false  # No substrate on standalone Kind
+
+# ==============================================================================
+# Built-in Agents
+# ==============================================================================
+# These are agents bundled with the kagent Helm chart, not the custom declarative
+# agents. We enable the ones that make sense on a standalone Kind cluster.
+agents:
+  k8s-agent:
+    enabled: true
+  kgateway-agent:
+    enabled: false        # No kgateway on Kind
+  istio-agent:
+    enabled: false
+  promql-agent:
+    enabled: true
+  observability-agent:
+    enabled: true
+  argo-rollouts-agent:
+    enabled: false
+  helm-agent:
+    enabled: true
+  cilium-policy-agent:
+    enabled: false
+  cilium-manager-agent:
+    enabled: false
+  cilium-debug-agent:
+    enabled: false

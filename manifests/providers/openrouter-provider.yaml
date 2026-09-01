@@ -1,0 +1,70 @@
+# ==============================================================================
+# OpenRouter — OpenAI-compatible API
+# ==============================================================================
+# OpenRouter provides access to many models via OpenAI-compatible API.
+# Set your OpenRouter API key in the kagent-openai secret and it'll be used
+# as the Authorization header. The model field uses OpenRouter model IDs.
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: openrouter-deepseek-v4-flash
+  namespace: kagent
+spec:
+  apiKeySecret: kagent-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  model: deepseek/deepseek-v4-flash-latest
+  provider: OpenAI
+  openAI:
+    baseUrl: https://openrouter.ai/api/v1
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: openrouter-deepseek-v3
+  namespace: kagent
+spec:
+  apiKeySecret: kagent-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  model: deepseek/deepseek-v3.2
+  provider: OpenAI
+  openAI:
+    baseUrl: https://openrouter.ai/api/v1
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: openrouter-qwen-coder
+  namespace: kagent
+spec:
+  apiKeySecret: kagent-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  model: qwen/qwen3-coder-flash
+  provider: OpenAI
+  openAI:
+    baseUrl: https://openrouter.ai/api/v1
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: openrouter-claude-sonnet
+  namespace: kagent
+spec:
+  apiKeySecret: kagent-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  model: anthropic/claude-sonnet-4-6
+  provider: OpenAI
+  openAI:
+    baseUrl: https://openrouter.ai/api/v1
+---
+apiVersion: kagent.dev/v1alpha2
+kind: ModelConfig
+metadata:
+  name: openrouter-gemini-3-flash
+  namespace: kagent
+spec:
+  apiKeySecret: kagent-openai
+  apiKeySecretKey: OPENAI_API_KEY
+  model: google/gemini-3.7-flash
+  provider: OpenAI
+  openAI:
+    baseUrl: https://openrouter.ai/api/v1

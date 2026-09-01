@@ -1,0 +1,26 @@
+# ==============================================================================
+# GitHub MCP — via api.githubcopilot.com
+# ==============================================================================
+# RemoteMCPServer pointing at GitHub's MCP endpoint. Requires a GitHub PAT
+# with repo scope stored in the kagent-github secret.
+# The token is injected as an Authorization header.
+# Works directly — no kgateway needed on Kind.
+# ==============================================================================
+apiVersion: kagent.dev/v1alpha2
+kind: RemoteMCPServer
+metadata:
+  name: github-mcp
+  namespace: kagent
+spec:
+  description: ""
+  headersFrom:
+    - name: Authorization  # <-- This field is required!
+      valueFrom:
+        name: kagent-github
+        key: GITHUB_PAT
+        type: Secret
+  protocol: STREAMABLE_HTTP
+  sseReadTimeout: 5m0s
+  terminateOnClose: true
+  timeout: 5s
+  url: https://api.githubcopilot.com/mcp/
