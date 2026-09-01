@@ -132,6 +132,53 @@ Switching to mtls means re-adding the feature gates (they are still in
 [`hack/install-ate.sh`](https://github.com/agent-substrate/substrate/blob/main/hack/install-ate.sh)
 is the reference.
 
+### ClusterTrustBundle is a dead requirement here — and a Kubernetes version floor
+
+Substrate's `mtls` mode depends on `ClusterTrustBundle`,
+`ClusterTrustBundleProjection` and `PodCertificateRequest`. Two things are worth
+being precise about, because both are easy to state wrongly.
+
+**They are recent.** From Kubernetes' own
+[`versioned_feature_list.yaml`](https://github.com/kubernetes/kubernetes/blob/master/test/compatibility_lifecycle/reference/versioned_feature_list.yaml):
+
+| Feature gate | Alpha | Beta | GA (on by default) |
+|---|---|---|---|
+| `ClusterTrustBundle` | 1.27 | 1.33 | **1.37** |
+| `ClusterTrustBundleProjection` | 1.29 | 1.33 | **1.37** |
+| `PodCertificateRequest` | **1.34** | 1.35 | **1.37** |
+
+`PodCertificateRequest` does not exist at all before **1.34**, so substrate's
+mtls mode is simply not available on an older cluster — that is a hard floor on
+where substrate can run in that mode, independent of anything in this repo.
+
+**On this cluster the gates are redundant.** We run Kubernetes **1.37**, where
+all three are **GA and default-enabled**. Listing them in `kind-config.yaml`
+changes nothing.
+
+> **Correction to earlier notes in this repo.** The original diagnosis said a
+> vanilla Kind cluster was missing "three feature gates". That was wrong for
+> 1.37. Evidence: on the pre-rebuild vanilla cluster,
+> `kubectl api-resources --api-group=certificates.k8s.io` already listed
+> `clustertrustbundles` and `podcertificaterequests`, while
+> `kubectl get --raw /apis/certificates.k8s.io` returned **only** `v1`.
+>
+> The single thing actually missing was
+> `runtimeConfig: "certificates.k8s.io/v1beta1": "true"` — substrate's
+> `podcertcontroller` imports `k8s.io/api/certificates/v1beta1` exclusively, and
+> 1.37 does not serve that group-version unless asked. So on 1.37 the gates are
+> noise and the runtimeConfig was the real requirement.
+
+Net effect for this repo: with `auth.mode: jwt` **none of it is needed** — no
+gates, no `v1beta1`, no `podcertificate-controller`, no ClusterTrustBundles.
+The signer RBAC that existed for the mtls path was removed once jwt was adopted
+(see the audit below), and the leftover `podcert.ate.dev` ClusterTrustBundles
+were deleted from the cluster.
+
+`kind-config.yaml` still carries the gates. On 1.37 they are a no-op; they are
+kept only so the file stays correct if this is ever run against 1.34–1.36,
+where they are Alpha/Beta and off by default. If you switch to mtls on 1.37,
+the line that matters is the `runtimeConfig`, not the gates.
+
 ---
 
 ## 3. Caveats and workarounds
@@ -197,11 +244,18 @@ cheap.
 
 ### 3.5 `kind-config.yaml` is retained but not required
 
-It carries the mtls feature gates, which `auth.mode: jwt` does not need. It is
-kept anyway because those gates **cannot be added to a running kind cluster** —
-dropping them would mean rebuilding the cluster to switch modes. It also sets
-`serializeImagePulls: false`, which genuinely helps: substrate pulls several
-hundred MB onto one node.
+The feature gates it carries are a no-op on Kubernetes 1.37 (all three are GA
+and default-on) and are unused under `auth.mode: jwt` regardless — see
+"ClusterTrustBundle is a dead requirement here" above. They are kept only so
+the file remains correct against 1.34–1.36, where they are Alpha/Beta and off
+by default, and because `runtimeConfig`/`featureGates` **cannot be added to a
+running kind cluster** — changing them means rebuilding.
+
+The part of this file that earns its place today is
+`serializeImagePulls: false` / `maxParallelImagePulls: 4`: substrate pulls
+several hundred MB onto a single node, and kubelet serialises pulls by default,
+so whichever workload lands at the back of the queue can miss its readiness
+deadline.
 
 ### 3.6 Recovering a wedged AgentHarness
 
@@ -283,5 +337,66 @@ curl -s http://127.0.0.1:18083/api/substrate/status | python3 -m json.tool
 Watching the worker pod is the most direct signal that a turn really ran:
 
 ```bash
+kubectl -n kagent logs <worker pod> --since=5m | grep -iE 'api call|tool .* completed|turn ended'
+```
+
+---
+
+## Audit trail
+
+Kept deliberately: if this breaks later, this is what was changed, why, and how
+to undo it. Every commit below is on `main`; nothing was force-pushed, so
+`git show <sha>` always recovers the full reasoning and any deleted file.
+
+### Chronology
+
+| Commit | Change | Driver |
+|---|---|---|
+| `e52400c` | kind feature gates + CA bootstrap script; disabled all built-in agents | Substrate pods stuck `ContainerCreating` on `matched zero ClusterTrustBundles`; also found the `agents:` values were nested wrongly and every agent was silently running at chart default |
+| `dd4b50e` | podcert signer-use RBAC; privileged PSS on `kagent` | Cross-referenced from the home-cluster deployment |
+| `2e396b0` → `af441e5` → `2aeb813` | Flux pinned 2.9.x → 2.6.x → **2.8.x**; flux-operator → 0.52.0 | FluxInstance `Stalled=BuildFailed`, **zero** Flux CRDs installed. 2.6.x cleared the stall but was too old for `spec.install.strategy`. 2.8.x satisfies both ends |
+| `8265414` | cert-manager `Certificate` for `bitwarden-sdk-server` | Pod stuck on missing `bitwarden-tls-certs`, blocking the whole ESO → kagent chain |
+| `5640f95` | `DisableChartDigestTracking` on helm-controller | k8s 1.34+ rejects `+` in the chart-version label |
+| `89f2e57` → `c8d120b` | substrate 0.0.22, then **reverted** | Wrong direction: 0.0.22 removes `spec.ateomImage` from the WorkerPool CRD, which kagent still sets |
+| `49f6d2c` | substrate **0.0.9** + `auth.mode: jwt` | The actual fix. kagent vendors substrate `v0.0.9`; 0.0.21's proto broke `GetActor` |
+| `048fbb0` | worker pool 2 → 4 replicas | `no free workers available` — one actor per worker |
+| `3351ec6`, `170e135`, `0f7f25a` | Documentation; removed dead paths | Cleanup once the shape was settled |
+
+### Removed, and how to get it back
+
+Nothing here is lost — `git show <sha>:<path>` restores any of it.
+
+| Removed in | What | Why it went | Restore if… |
+|---|---|---|---|
+| `170e135` | `hack/substrate-bootstrap.sh` | Dead under jwt, and already wrong for 0.0.9 — it created 0.0.21's `actor-id-*` secrets, not `session-id-*` | You switch to mtls. Prefer upstream's [`hack/install-ate.sh`](https://github.com/agent-substrate/substrate/blob/main/hack/install-ate.sh) as the reference |
+| `170e135` | `manifests/`, `helm/kagent-values.yaml` | Legacy non-Flux path duplicating `flux/apps/base/kagent/*` while drifting from it; held placeholder API keys | You want a non-GitOps install path — but regenerate it rather than restoring stale copies |
+| `0f7f25a` | `flux/apps/base/substrate/substrate-operator/rbac-podcert-signer-use.yaml` | jwt renders no podCertificate projections at all (verified zero on the live cluster), so it grants nothing | You switch to mtls — then it is **required**, or Kubernetes silently strips `signerName` and pods come up with empty cert projections |
+
+Also deleted from the cluster (not from git — they were never in it): the
+orphaned `podidentity.podcert.ate.dev` / `servicedns.podcert.ate.dev`
+ClusterTrustBundles and the `podcert-ate-dev-signer-use` ClusterRole/Binding,
+all created during the 0.0.21/mtls attempt.
+
+### Still parked, deliberately
+
+| Thing | State | Note |
+|---|---|---|
+| Seven declarative `k8s-*` agents | `flux/apps/base/kagent/agents/` present; `flux/apps/dev/kagent/agents/ks.yaml.disabled` renamed and commented out of the parent kustomization | The `.disabled` suffix matters: where a directory has no `kustomization.yaml`, Flux generates one from the `*.yaml` it finds, so a stray `ks.yaml` could be picked up even when unlisted |
+| `kind-config.yaml` feature gates | Present, no-op on 1.37 | See §3.5 |
+| `gotk-components.yaml` | Pinned v2.9.5 while the operator installs 2.8.x | Inert — the operator owns the controllers — but should be regenerated |
+| `test` AgentHarness | Running in-cluster, not in git | Created manually; occupies a worker. `kubectl -n kagent delete agentharness test` |
+
+### If it breaks again — first three checks
+
+```bash
+# 1. Version pairing. This is the failure that looks like success.
+curl -sS https://raw.githubusercontent.com/kagent-dev/kagent/refs/tags/v<KAGENT>/go/go.mod | grep substrate
+kubectl -n ate-system get helmrelease substrate -o jsonpath='{.status.lastAppliedRevision}{"\n"}'
+
+# 2. Is Flux itself actually installed? A stalled FluxInstance installs no CRDs.
+kubectl -n flux-system get fluxinstance flux \
+  -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}{"\n"}'
+
+# 3. The real chat path — not `Ready`.
 kubectl -n kagent logs <worker pod> --since=5m | grep -iE 'api call|tool .* completed|turn ended'
 ```
