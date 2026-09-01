@@ -26,7 +26,7 @@ flux logs --follow --level=error
 kubectl describe kustomization kagent-operator -n flux-system
 
 # Port-forward the kagent UI
-kubectl -n kagent port-forward svc/kagent-ui 8080:8080
+kubectl -n kagent port-forward --address 0.0.0.0 svc/kagent-ui 8080:8080
 ```
 
 ## Architecture: Three-Layer GitOps

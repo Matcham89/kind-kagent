@@ -103,9 +103,8 @@ kagent-secrets ──→ kagent-providers ──→ kagent-agents
 flux get kustomizations -A
 
 # 4. Port-forward the UI once pods are ready
-kubectl -n kagent port-forward svc/kagent-ui 8080:8080
-
-# 5. Open http://localhost:8080
+kubectl -n kagent port-forward --address 0.0.0.0 svc/kagent-ui 8080:8080
+# Open http://<server-ip>:8080
 ```
 
 The bootstrap script:
@@ -172,8 +171,10 @@ kubectl -n kagent get modelconfigs
 kubectl -n kagent get remotemcpservers
 
 # Check the kagent UI
-kubectl -n kagent port-forward svc/kagent-ui 8080:8080
-# Open http://localhost:8080
+kubectl -n kagent port-forward --address 0.0.0.0 svc/kagent-ui 8080:8080
+# Then open http://<server-ip>:8080 in your browser
+
+  Be careful not to commit your API keys to git (they are already committed as placeholders).
 ```
 
 ---
