@@ -44,7 +44,7 @@ spec:
     substrateWorkerPool:
       create: true
       replicas: 2
-      ateomImage: ghcr.io/kagent-dev/substrate/ateom-gvisor:v0.0.21
+      ateomImage: ghcr.io/kagent-dev/substrate/ateom-gvisor:v0.0.9
 
     # ==============================================================================
     # OTel — DISABLED (no OTel collector on Kind)

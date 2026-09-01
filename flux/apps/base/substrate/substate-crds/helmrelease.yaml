@@ -8,8 +8,21 @@ spec:
   url: oci://ghcr.io/kagent-dev/substrate/helm/substrate-crds
   ref:
     # renovate: datasource=github-releases depName=kagent-dev/substrate extractVersion=^v(?<version>.*)$
-    # NOTE: chart tags are published WITHOUT the v prefix (0.0.21, not v0.0.21)
-    tag: 0.0.21
+    # NOTE: chart tags are published WITHOUT the v prefix (0.0.9, not v0.0.9)
+    #
+    # PINNED TO 0.0.9 ON PURPOSE — do not bump without bumping kagent too.
+    # kagent 0.10.0-rc3 and rc5 both vendor the substrate Go module v0.0.9:
+    #   go/go.mod: replace github.com/agent-substrate/substrate =>
+    #                      github.com/kagent-dev/substrate v0.0.9
+    # so kagent's ateapi gRPC client speaks v0.0.9's protobuf. Running a newer
+    # substrate server makes AgentHarness chat fail to decode the reply:
+    #   substrate GetActor "ahr-kagent-<name>": rpc error: code = Internal
+    #   desc = grpc: failed to unmarshal the received message:
+    #   string field contains invalid UTF-8
+    # Everything else looks healthy when this happens — the harness reports
+    # Ready and the actor reaches ACTOR_STATE_RUNNING — so it only shows up as
+    # "An error occurred" in the UI. See README.
+    tag: 0.0.9
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -25,37 +38,8 @@ spec:
     createNamespace: true
     remediation:
       retries: 3
-  postRenderers:
-    - kustomize:
-        patches:
-          - target:
-              kind: CustomResourceDefinition
-              name: actortemplates.ate.dev
-            patch: |-
-              - op: replace
-                path: /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/containers/items/properties/env/items/required
-                value: ["name"]
-              - op: add
-                path: /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/containers/items/properties/env/items/properties/valueFrom
-                value:
-                  description: "Source for the environment variable value."
-                  type: object
-                  properties:
-                    secretKeyRef:
-                      description: "Selects a key of a Secret."
-                      type: object
-                      properties:
-                        name:
-                          type: string
-                          maxLength: 253
-                        key:
-                          type: string
-                          minLength: 1
-                        optional:
-                          type: boolean
-                      required: ["name", "key"]
-              - op: add
-                path: /spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/pauseImage
-                value:
-                  description: "Image used for the pause container."
-                  type: string
+  # No postRenderers. 0.0.21 needed a patch to add valueFrom/secretKeyRef and
+  # pauseImage to the ActorTemplate CRD; 0.0.9 ships valueFrom and pauseImage
+  # natively, which is itself a sign 0.0.21 was the wrong pairing for kagent
+  # 0.10.0-rc3. Only secretKeyRef under valueFrom is still absent upstream; add
+  # a patch back here if an ActorTemplate ever needs it.

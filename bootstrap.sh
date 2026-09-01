@@ -35,10 +35,8 @@ echo "=== Checking prerequisites ==="
 command -v kind >/dev/null 2>&1 || { echo "ERROR: kind is required but not installed."; exit 1; }
 command -v helm >/dev/null 2>&1 || { echo "ERROR: helm is required but not installed."; exit 1; }
 command -v kubectl >/dev/null 2>&1 || { echo "ERROR: kubectl is required but not installed."; exit 1; }
-# docker builds kubectl-ate (no Go toolchain assumed); openssl converts the
-# substrate CA roots from DER to PEM.
+# docker is needed for the kind node containers and the node sysctl patches.
 command -v docker >/dev/null 2>&1 || { echo "ERROR: docker is required but not installed."; exit 1; }
-command -v openssl >/dev/null 2>&1 || { echo "ERROR: openssl is required but not installed."; exit 1; }
 
 # ==============================================================================
 # Step 0: Create Kind cluster (if not already existing)
@@ -114,14 +112,17 @@ else
 fi
 
 # ==============================================================================
-# Step 0d: Agent Substrate bootstrap (CA pools, JWT authority, API auth config)
+# Step 0d: Agent Substrate bootstrap — NOT NEEDED in jwt mode
 # ==============================================================================
-# The substrate Helm chart mounts these secrets but never creates them, so this
-# must happen for substrate pods to leave ContainerCreating. It is independent
-# of Flux and idempotent, so it runs before the GitOps sync rather than racing
-# the HelmRelease.
-echo "=== Step 0d: Agent Substrate bootstrap ==="
-"${SCRIPT_DIR}/hack/substrate-bootstrap.sh"
+# substrate runs with auth.mode=jwt (see
+# flux/apps/base/substrate/substrate-operator/helmrelease.yaml). In jwt mode the
+# chart bootstraps its own key material and does not render the
+# podcertificate-controller, so there are no CA pools to create out of band.
+#
+# hack/substrate-bootstrap.sh is kept for the mtls path only. It still targets
+# 0.0.21's actor-id-* secret naming and would need updating to 0.0.9's
+# session-id-* naming before use. Run it manually if you switch to mtls:
+#   ./hack/substrate-bootstrap.sh
 
 # ==============================================================================
 # Step 1: Install Flux Operator

@@ -7,7 +7,9 @@ spec:
   interval: 1m0s
   url: oci://ghcr.io/kagent-dev/substrate/helm/substrate
   ref:
-    tag: 0.0.21
+    # PINNED TO 0.0.9 — must match substrate-crds and kagent's vendored
+    # substrate Go module. See the long note in substate-crds/helmrelease.yaml.
+    tag: 0.0.9
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -25,6 +27,29 @@ spec:
     createNamespace: true
     remediation:
       retries: 3
+  values:
+    auth:
+      # jwt, not mtls. In jwt mode the chart bootstraps its own key material
+      # (ateapi-tls, session-id-jwt-pool, session-id-ca-pool) and does not
+      # render the podcertificate-controller at all, so none of substrate's
+      # CA pools have to be created out of band and the cluster does not need
+      # the ClusterTrustBundle / ClusterTrustBundleProjection /
+      # PodCertificateRequest feature gates.
+      #
+      # Switching to mtls means: re-enable those gates (kind-config.yaml keeps
+      # them on regardless) AND create service-dns-ca-pool, pod-identity-ca-pool
+      # and the session-id-* pools by hand — see hack/substrate-bootstrap.sh,
+      # which currently targets 0.0.21's actor-id-* naming and would need
+      # updating for 0.0.9's session-id-* naming first.
+      mode: jwt
+      jwt:
+        # Matches this cluster exactly; verify with
+        #   kubectl get --raw /.well-known/openid-configuration
+        issuer: https://kubernetes.default.svc.cluster.local
+        audience: api.ate-system.svc
+        bootstrap:
+          enabled: true
+
   # On Kind, rustfs Recreate strategy prevents PV attach deadlocks
   # on pod restart. Valkey hostname announcement keeps the cluster
   # healthy after full-cluster restart (e.g. host reboot).
