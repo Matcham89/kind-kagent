@@ -93,26 +93,32 @@ spec:
         ateApiInsecure: true
 
     # ==============================================================================
-    # Built-in agents
+    # Built-in agents — ALL DISABLED
     # ==============================================================================
-    agents:
-      k8s-agent:
-        enabled: true
-      kgateway-agent:
-        enabled: false
-      istio-agent:
-        enabled: false
-      promql-agent:
-        enabled: true
-      observability-agent:
-        enabled: true
-      argo-rollouts-agent:
-        enabled: false
-      helm-agent:
-        enabled: true
-      cilium-policy-agent:
-        enabled: false
-      cilium-manager-agent:
-        enabled: false
-      cilium-debug-agent:
-        enabled: false
+    # These are Helm SUBCHARTS, gated by `condition: <name>.enabled` in the
+    # kagent Chart.yaml, so each key must sit at the TOP LEVEL of values.
+    # Nesting them under an `agents:` map (as this file previously did) is
+    # silently ignored by Helm, leaving every subchart at its chart default of
+    # enabled=true — which is why all ten agent pods ran regardless.
+    #
+    # This cluster runs the hermes AgentHarness only.
+    k8s-agent:
+      enabled: false
+    kgateway-agent:
+      enabled: false
+    istio-agent:
+      enabled: false
+    promql-agent:
+      enabled: false
+    observability-agent:
+      enabled: false
+    argo-rollouts-agent:
+      enabled: false
+    helm-agent:
+      enabled: false
+    cilium-policy-agent:
+      enabled: false
+    cilium-manager-agent:
+      enabled: false
+    cilium-debug-agent:
+      enabled: false

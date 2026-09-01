@@ -13,5 +13,11 @@ resources:
   - ./secrets/ks.yaml
   - ./providers/ks.yaml
   - ./mcps/ks.yaml
-  - ./agents/ks.yaml
+  # Declarative k8s-* agents are disabled: this cluster runs the hermes
+  # AgentHarness only. To re-enable, rename
+  # ./agents/ks.yaml.disabled back to ./agents/ks.yaml and uncomment below.
+  # The .disabled suffix matters: where a directory has no kustomization.yaml,
+  # Flux generates one from the *.yaml it finds, so a stray ks.yaml could still
+  # be picked up even though it is not listed here.
+  # - ./agents/ks.yaml
   - ./agent-harnesses/ks.yaml

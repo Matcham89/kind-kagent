@@ -1,0 +1,46 @@
+# ==============================================================================
+# Kind cluster config — kagent + Agent Substrate
+# ==============================================================================
+# Agent Substrate's podcertificate-controller issues the pod-identity and
+# service-DNS certificates that atelet/ateapi mount as projected
+# podCertificate + clusterTrustBundle volumes. None of that machinery is on by
+# default, so a bare `kind create cluster` leaves every substrate pod stuck at
+# ContainerCreating with:
+#   MountVolume.SetUp failed ... matched zero ClusterTrustBundles
+#
+# Mirrors upstream hack/create-kind-cluster.sh from agent-substrate/substrate.
+# ==============================================================================
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  ipFamily: ipv4
+
+# cmd/podcertcontroller depends on ClusterTrustBundle & PodCertificateRequest,
+# which are not enabled by default as of Kubernetes v1.36.
+featureGates:
+  ClusterTrustBundle: true
+  ClusterTrustBundleProjection: true
+  PodCertificateRequest: true
+
+# podcertcontroller talks exclusively to certificates.k8s.io/v1beta1. Kubernetes
+# v1.37 serves only v1 unless this group-version is explicitly switched on.
+runtimeConfig:
+  "certificates.k8s.io/v1beta1": "true"
+
+nodes:
+  - role: control-plane
+    # Lets micro-VM (kata + cloud-hypervisor) worker pods reach KVM. Harmless
+    # when unused — the default ateom-gvisor runtime does not need it.
+    extraMounts:
+      - hostPath: /dev/kvm
+        containerPath: /dev/kvm
+
+# The substrate install pulls several hundred MB of third-party images
+# (postgres, rustfs, envoy, valkey) onto this single node. kubelet serializes
+# image pulls by default, so whichever workload lands at the back of the queue
+# can miss its readiness deadline.
+kubeadmConfigPatches:
+  - |
+    kind: KubeletConfiguration
+    serializeImagePulls: false
+    maxParallelImagePulls: 4

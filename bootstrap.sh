@@ -35,16 +35,40 @@ echo "=== Checking prerequisites ==="
 command -v kind >/dev/null 2>&1 || { echo "ERROR: kind is required but not installed."; exit 1; }
 command -v helm >/dev/null 2>&1 || { echo "ERROR: helm is required but not installed."; exit 1; }
 command -v kubectl >/dev/null 2>&1 || { echo "ERROR: kubectl is required but not installed."; exit 1; }
+# docker builds kubectl-ate (no Go toolchain assumed); openssl converts the
+# substrate CA roots from DER to PEM.
+command -v docker >/dev/null 2>&1 || { echo "ERROR: docker is required but not installed."; exit 1; }
+command -v openssl >/dev/null 2>&1 || { echo "ERROR: openssl is required but not installed."; exit 1; }
 
 # ==============================================================================
 # Step 0: Create Kind cluster (if not already existing)
 # ==============================================================================
 if ! kind get clusters 2>/dev/null | grep -q "^kagent$"; then
   echo "=== Step 0: Create Kind cluster ==="
-  kind create cluster --name kagent
+  # kind-config.yaml is NOT optional: it enables the ClusterTrustBundle /
+  # PodCertificateRequest feature gates and the certificates.k8s.io/v1beta1
+  # group-version that Agent Substrate's podcertificate-controller requires.
+  kind create cluster --name kagent --config "${SCRIPT_DIR}/kind-config.yaml"
 else
   echo "=== Step 0: Kind cluster 'kagent' already exists ==="
+  echo "    NOTE: Agent Substrate needs the feature gates in kind-config.yaml."
+  echo "    A cluster created before that config cannot run substrate; the gates"
+  echo "    cannot be added to a running kind cluster. Recreate it with:"
+  echo "      kind delete cluster --name kagent && ./bootstrap.sh"
 fi
+
+# ==============================================================================
+# Step 0a: Enable Proxy ARP/NDP on the kind nodes
+# ==============================================================================
+# substrate's gVisor sandboxes (ateom-gvisor) route pod-to-pod traffic over a
+# loopback path that needs the node to answer ARP for addresses it does not own.
+# Without this, actor sandboxes start but cannot reach ateapi.
+echo "=== Step 0a: Enable Proxy ARP/NDP on kind nodes ==="
+for node in $(kind get nodes --name kagent); do
+  docker exec "$node" sysctl -q net.ipv4.conf.all.proxy_arp=1
+  # -e: skip proxy_ndp rather than fail on a kernel built without IPv6.
+  docker exec "$node" sysctl -qe net.ipv6.conf.all.proxy_ndp=1
+done
 
 # ==============================================================================
 # Step 0b: Ensure kube-ops namespace exists for Bitwarden access token
@@ -64,6 +88,13 @@ kubectl create namespace kube-ops --dry-run=client -o yaml | kubectl apply -f -
 #     --from-literal=token=<your-token>
 #
 echo "=== Step 0c: Create Bitwarden access token secret ==="
+# Fall back to a gitignored token file. Cluster recreation is routine here and
+# an exported env var does not survive a new shell, so the file is the durable
+# option: printf %s > .bitwarden-token (no trailing newline needed).
+if [ -z "${BITWARDEN_ACCESS_TOKEN:-}" ] && [ -f "${SCRIPT_DIR}/.bitwarden-token" ]; then
+  BITWARDEN_ACCESS_TOKEN="$(tr -d '\r\n' < "${SCRIPT_DIR}/.bitwarden-token")"
+  echo "  Using token from ${SCRIPT_DIR}/.bitwarden-token"
+fi
 if [ -n "${BITWARDEN_ACCESS_TOKEN:-}" ]; then
   kubectl create secret generic bitwarden-access-token \
     --namespace=kube-ops \
@@ -81,6 +112,16 @@ else
     --from-literal=token="PLACEHOLDER-REPLACE-ME" \
     --dry-run=client -o yaml | kubectl apply -f -
 fi
+
+# ==============================================================================
+# Step 0d: Agent Substrate bootstrap (CA pools, JWT authority, API auth config)
+# ==============================================================================
+# The substrate Helm chart mounts these secrets but never creates them, so this
+# must happen for substrate pods to leave ContainerCreating. It is independent
+# of Flux and idempotent, so it runs before the GitOps sync rather than racing
+# the HelmRelease.
+echo "=== Step 0d: Agent Substrate bootstrap ==="
+"${SCRIPT_DIR}/hack/substrate-bootstrap.sh"
 
 # ==============================================================================
 # Step 1: Install Flux Operator

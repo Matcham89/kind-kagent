@@ -11,6 +11,10 @@ spec:
   dependsOn:
     - name: kagent-operator
     - name: kagent-secrets
+    # AgentHarness provisions an ActorTemplate on substrate, so ateapi and the
+    # kagent-default WorkerPool must exist first.
+    - name: substrate-operator
+      namespace: ate-system
   interval: 1h
   path: ./flux/apps/base/kagent/agent-harnesses
   sourceRef:
