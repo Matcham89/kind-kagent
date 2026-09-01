@@ -50,6 +50,21 @@ spec:
     path: flux/clusters/dev
     interval: 1m
   kustomize:
-    patches: []
+    patches:
+      # Kubernetes 1.34+ rejects '+' in label values, and helm-controller
+      # appends the OCI digest to the chart version — producing the label
+      # "0.10.0-rc3+e9f54ef164de", which fails admission on every object the
+      # kagent chart applies:
+      #   ServiceAccount "kagent-controller" is invalid: metadata.labels:
+      #   Invalid value: "0.10.0-rc3+e9f54ef164de"
+      # This feature gate stops helm-controller adding the digest suffix.
+      # See https://github.com/fluxcd/flux2/issues/4910
+      - target:
+          kind: Deployment
+          name: helm-controller
+        patch: |
+          - op: add
+            path: /spec/template/spec/containers/0/args/-
+            value: --feature-gates=DisableChartDigestTracking=true
   wait: true
   migrateResources: true
