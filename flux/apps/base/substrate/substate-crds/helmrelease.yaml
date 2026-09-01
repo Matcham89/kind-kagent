@@ -8,8 +8,8 @@ spec:
   url: oci://ghcr.io/kagent-dev/substrate/helm/substrate-crds
   ref:
     # renovate: datasource=github-releases depName=kagent-dev/substrate extractVersion=^v(?<version>.*)$
-    # NOTE: chart tags are published WITHOUT the v prefix (0.0.22, not v0.0.22)
-    tag: 0.0.22
+    # NOTE: chart tags are published WITHOUT the v prefix (0.0.21, not v0.0.21)
+    tag: 0.0.21
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
