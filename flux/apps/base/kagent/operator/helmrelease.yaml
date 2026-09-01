@@ -43,7 +43,13 @@ spec:
     # ==============================================================================
     substrateWorkerPool:
       create: true
-      replicas: 2
+      # Each running actor occupies one worker, and a harness needs two at
+      # once: its golden actor while a snapshot is taken, plus the session
+      # actor serving chat. With replicas: 2 and more than one harness the
+      # ate-controller fails golden resumes with
+      #   FailedPrecondition desc = no free workers available
+      # 0.0.9 workers declare no CPU/memory requests, so headroom is cheap.
+      replicas: 4
       ateomImage: ghcr.io/kagent-dev/substrate/ateom-gvisor:v0.0.9
 
     # ==============================================================================
