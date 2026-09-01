@@ -10,7 +10,15 @@ metadata:
     fluxcd.controlplane.io/reconcileArtifactEvery: 10m
 spec:
   distribution:
-    version: 2.x
+    # Pinned, not "2.x". The flux-operator applies its own patches to the Flux
+    # CRDs it installs, and a floating range silently picks up a newer Flux
+    # whose CRD shape those patches no longer fit. On 2.x this stalled the
+    # FluxInstance outright with:
+    #   add operation does not apply: doc is missing path:
+    #   "/spec/versions/1/.../eventSources/items/properties/kind/enum/-"
+    # because the Receiver CRD dropped a served version. Keep this in step with
+    # flux/clusters/dev/flux-system/gotk-components.yaml (currently v2.9.5).
+    version: 2.9.x
     registry: ghcr.io/fluxcd
     artifact: oci://ghcr.io/controlplaneio-fluxcd/flux-operator-manifests
   components:
