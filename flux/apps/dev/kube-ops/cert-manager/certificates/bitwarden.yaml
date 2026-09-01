@@ -1,0 +1,32 @@
+---
+# Serving cert for bitwarden-sdk-server, which ESO's Bitwarden provider talks to
+# over HTTPS. The external-secrets chart's bitwarden-sdk-server subchart mounts
+# the `bitwarden-tls-certs` Secret (image.tls.enabled defaults to true) but ships
+# no Certificate template, and the parent chart's `certManager.enabled` only
+# covers the ESO webhook — so nothing creates this and the pod sits in
+# ContainerCreating on `secret "bitwarden-tls-certs" not found`, blocking the
+# whole ESO -> store -> kagent-secrets chain.
+#
+# The `selfsigned` ClusterIssuer is its own CA, so cert-manager populates
+# `ca.crt` in the Secret — which is what the ClusterSecretStore's caProvider
+# reads to trust this server.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: bitwarden-sdk-server-cert
+spec:
+  secretName: bitwarden-tls-certs
+  duration: 8760h
+  renewBefore: 720h
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  dnsNames:
+    - bitwarden-sdk-server.kube-ops.svc.cluster.local
+    - external-secrets-bitwarden-sdk-server.kube-ops.svc.cluster.local
+    - localhost
+  ipAddresses:
+    - 127.0.0.1
+  issuerRef:
+    name: selfsigned
+    kind: ClusterIssuer

@@ -11,5 +11,6 @@ components:
 resources:
   - ./cert-manager/operator/ks.yaml
   - ./cert-manager/selfsigned/ks.yaml
+  - ./cert-manager/certificates/ks.yaml
   - ./external-secrets/operator/ks.yaml
   - ./external-secrets/store/ks.yaml
