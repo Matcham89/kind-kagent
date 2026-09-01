@@ -3,22 +3,16 @@
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: &app external-secrets-store
+  name: &app cert-manager-selfsigned
+  namespace: kube-ops
 spec:
   commonMetadata:
     labels:
       app.kubernetes.io/name: *app
   dependsOn:
     - name: cert-manager-operator
-    - name: cert-manager-selfsigned
-    - name: external-secrets-operator
-  healthCheckExprs:
-    - apiVersion: external-secrets.io/v1
-      kind: ClusterSecretStore
-      failed: status.conditions.exists(c, c.type == 'Ready' && c.status == 'False')
-      current: status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')
   interval: 1h
-  path: ./flux/apps/base/kube-ops/external-secrets/store
+  path: ./flux/apps/dev/kube-ops/cert-manager/selfsigned
   sourceRef:
     kind: GitRepository
     name: flux-system
