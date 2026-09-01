@@ -75,16 +75,44 @@ kagent-crds (OCIRepository + HelmRelease)
         └── kagent-operator (HelmRelease for kagent controller + UI)
               └── kagent-providers (ModelConfigs referencing secrets)
                     └── kagent-mcps (RemoteMCPServer)
-                          └── kagent-agents (declarative Agents)
+                          └── kagent-agent-harnesses (hermes-shell)
+
+NOTE: kagent-agents (the declarative k8s-* Agents) is NOT deployed. Its
+ks.yaml is renamed to ks.yaml.disabled and commented out of
+apps/dev/kagent/kustomization.yaml — this cluster is harness-only.
 ```
 
 ## Namespace Infra Components
 
 | Component | PSS | Use For |
 |---|---|---|
-| `namespace` | restricted | kagent namespace |
+| `namespace` | restricted | general workloads |
+| `namespace-privileged` | privileged | `kagent` AND `ate-system` |
+
+`kagent` must be **privileged**: the `kagent-default` WorkerPool's
+`ateom-gvisor` worker pods run there and request `SYS_ADMIN`, `NET_ADMIN`,
+`SYS_PTRACE` and an unconfined AppArmor profile, which `restricted` and
+`baseline` both reject.
 
 One active Kustomize Component in `infra/` — include via `components:` in a namespace's `kustomization.yaml`.
+
+## Agent Substrate — version pinning is load-bearing
+
+kagent vendors the substrate Go module, so the two versions must match or the
+AgentHarness looks healthy but chat fails with an opaque error. Derive the
+correct substrate version from kagent's `go.mod`:
+
+```bash
+curl -sS https://raw.githubusercontent.com/kagent-dev/kagent/refs/tags/v<KAGENT>/go/go.mod \
+  | grep substrate
+# replace github.com/agent-substrate/substrate => github.com/kagent-dev/substrate v0.0.9
+```
+
+Currently kagent `0.10.0-rc3` <-> substrate `0.0.9`. Bump both together, and
+keep `substrateWorkerPool.ateomImage` on the same substrate version. Substrate
+runs `auth.mode: jwt`, which self-bootstraps its key material.
+
+See the README for the full failure modes.
 
 ## Secret Management
 
@@ -122,7 +150,7 @@ All providers connect directly to their API endpoints (no kgateway):
 
 ## Bootstrap Flow
 
-1. `kind create cluster --name kagent`
+1. `kind create cluster --name kagent --config kind-config.yaml`
 2. Install Flux Operator Helm chart
 3. Apply `flux/clusters/dev/flux-instance.yaml`
 4. Flux Operator provisions Flux controllers
@@ -136,6 +164,9 @@ See `bootstrap.sh` for the full script.
 ```
 external-secrets-operator → external-secrets-store → kagent-secrets
 kagent-crds → kagent-operator
-kagent-secrets → kagent-providers → kagent-agents
-kagent-operator → kagent-mcps → kagent-agents
+kagent-secrets → kagent-providers → kagent-agent-harnesses
+kagent-operator → kagent-mcps
+cert-manager-operator → cert-manager-selfsigned → cert-manager-certificates
+                                                → external-secrets-operator
+substrate-crds → substrate-operator → kagent-agent-harnesses
 ```

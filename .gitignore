@@ -17,8 +17,8 @@ id_rsa*
 .vscode/
 .idea/
 *.log
-# Substrate bootstrap
-# locally built kubectl-ate
-bin/
 # ESO access token, read by bootstrap.sh
 .bitwarden-token
+
+# Scratch dir for locally built debug binaries (e.g. kubectl-ate)
+bin/

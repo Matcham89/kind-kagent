@@ -40,50 +40,58 @@ The repo follows the same three-layer GitOps pattern as the home-cluster:
 ```
 flux/
 ├── clusters/dev/                    # Flux entrypoint
-│   ├── flux-instance.yaml           # FluxInstance (Flux Operator self-upgrade + sync config)
+│   ├── flux-instance.yaml           # FluxInstance: pins Flux 2.8.x + helm-controller patch
 │   ├── cluster-apps.yaml            # Root Kustomization → ./flux/apps/dev
-│   └── flux-system/
-│       ├── gotk-components.yaml     # Pre-generated Flux controller manifests (self-healing)
-│       ├── gotk-sync.yaml           # GitRepository + Kustomization for self-sync
-│       └── kustomization.yaml
+│   └── flux-system/                 # Pre-generated Flux manifests (see note)
 ├── apps/
-│   ├── base/kagent/                 # Actual Kubernetes manifests
-│   │   ├── crds/                    # OCIRepository + HelmRelease for kagent CRDs
-│   │   ├── operator/                # OCIRepository + HelmRelease for kagent controller+UI
-│   │   ├── secrets/                 # ExternalSecrets pulling API keys from Bitwarden
-│   │   ├── providers/               # ModelConfigs (direct API mode)
-│   │   ├── agents/                  # Declarative k8s agents
-│   │   └── mcps/                    # RemoteMCPServer (GitHub MCP)
-│   ├── dev/kagent/                  # Flux Kustomization resources (ks.yaml per component)
-│   │       ├── kustomization.yaml       # Namespace component + resource list
-│   │       ├── crds/ks.yaml
-│   │       ├── operator/ks.yaml
-│   │       ├── secrets/ks.yaml
-│   │       ├── providers/ks.yaml
-│   │       ├── agents/ks.yaml
-│   │       └── mcps/ks.yaml
-│   └── dev/kube-ops/                # Flux Kustomization resources for kube-ops
-│       ├── kustomization.yaml       # Namespace component + resource list
-│       └── external-secrets/
-│           ├── operator/ks.yaml
-│           └── store/ks.yaml
+│   ├── base/                        # Actual Kubernetes manifests
+│   │   ├── kagent/
+│   │   │   ├── crds/                # OCIRepository + HelmRelease, kagent CRDs
+│   │   │   ├── operator/            # kagent controller + UI; all built-in agents off
+│   │   │   ├── secrets/             # ExternalSecrets pulling keys from Bitwarden
+│   │   │   ├── providers/           # ModelConfigs (direct API mode)
+│   │   │   ├── mcps/                # RemoteMCPServer (GitHub MCP)
+│   │   │   ├── agents/              # Declarative k8s agents — NOT deployed
+│   │   │   └── agent-harnesses/     # hermes-shell AgentHarness
+│   │   ├── substrate/
+│   │   │   ├── substate-crds/       # ate.dev CRDs, pinned 0.0.9
+│   │   │   └── substrate-operator/  # substrate chart (auth.mode: jwt) + signer RBAC
+│   │   └── kube-ops/
+│   │       ├── cert-manager/        # cert-manager operator
+│   │       └── external-secrets/    # ESO operator + Bitwarden ClusterSecretStore
+│   └── dev/                         # Flux Kustomization resources (ks.yaml per component)
+│       ├── kagent/                  # agents/ks.yaml.disabled — renamed, not listed
+│       ├── substrate/
+│       └── kube-ops/                # incl. cert-manager/certificates (bitwarden TLS)
 ├── infra/                           # Reusable Kustomize Components
 │   ├── namespace/                   # Restricted PSS namespace template
-│   ├── namespace-privileged/        # Privileged PSS namespace template
-│   └── kustomization.yaml
+│   └── namespace-privileged/        # Privileged PSS — used by kagent AND ate-system
 └── CLAUDE.md
 ```
 
+> `flux/clusters/dev/flux-system/gotk-components.yaml` is still pinned at
+> v2.9.5 while the FluxInstance installs 2.8.x. The operator owns the
+> controllers, so the file is inert — but it should be regenerated at 2.8.x.
+
 ### Dependency Chain
 
+`dependsOn` between Flux Kustomizations, all of which must be satisfied before
+the AgentHarness can come up:
+
 ```
-kagent-crds ──→ kagent-operator
-                     ↓
-external-secrets-operator ──→ external-secrets-store
-                                     ↓
-kagent-secrets ──→ kagent-providers ──→ kagent-agents
-                     ↓
-           kagent-mcps ──────────────→ kagent-agents
+cert-manager-operator ──→ cert-manager-selfsigned ──→ cert-manager-certificates
+                                                              ↓  (bitwarden TLS cert)
+                                          external-secrets-operator
+                                                              ↓
+                                             external-secrets-store
+                                                              ↓
+kagent-crds ─┐                                        kagent-secrets
+substrate-crds ─┴──→ kagent-operator ←────────────────────────┘
+      ↓                    ↓
+substrate-operator    kagent-providers, kagent-mcps
+      └──────────┬─────────┘
+                 ↓
+        kagent-agent-harnesses
 ```
 
 ---
@@ -91,9 +99,10 @@ kagent-secrets ──→ kagent-providers ──→ kagent-agents
 ## Quick Start
 
 ```bash
-# 1. Before running bootstrap — fill in your API keys
-#    Edit flux/apps/base/kagent/secrets/kagent-secrets.yaml and replace
-#    <YOUR_ANTHROPIC_API_KEY>, <YOUR_OPENAI_API_KEY>, etc.
+# 1. Provide the Bitwarden access token (see next section).
+#    API keys themselves come from Bitwarden via ExternalSecrets — there is
+#    nothing to paste into a manifest.
+printf %s 'your-bitwarden-machine-account-token' > .bitwarden-token
 
 # 2. Bootstrap everything
 ./bootstrap.sh
@@ -107,16 +116,17 @@ kubectl -n kagent port-forward --address 0.0.0.0 svc/kagent-ui 8080:8080
 ```
 
 The bootstrap script:
-1. Creates a Kind cluster named `kagent` **using `kind-config.yaml`** — the
-   substrate feature gates cannot be added to a cluster after the fact
+1. Creates a Kind cluster named `kagent` using `kind-config.yaml`
 2. Enables `proxy_arp`/`proxy_ndp` on the node (gVisor pod networking)
-3. Creates the `kube-ops` namespace and Bitwarden access token secret
-4. Runs `hack/substrate-bootstrap.sh` — builds `kubectl-ate` and generates the
-   substrate CA pools, JWT authority, and API auth config
-5. Installs **Flux Operator** via Helm
-6. Applies **FluxInstance** — Flux Operator creates Flux controllers and syncs from this repo
-7. Flux reconciles and deploys ESO, kagent CRDs, operator, providers, agents,
-   MCP servers, substrate, and the AgentHarness
+3. Creates the `kube-ops` namespace and the Bitwarden access token secret
+4. Installs **Flux Operator** via Helm (pinned 0.52.0)
+5. Applies **FluxInstance** — the operator then creates the Flux controllers
+   and syncs this repo
+6. Flux reconciles everything else: cert-manager, ESO + Bitwarden store, kagent
+   CRDs/operator/providers/MCPs, substrate, and the AgentHarness
+
+Substrate needs no imperative bootstrap in `auth.mode: jwt` — the chart
+generates its own key material.
 
 ---
 
@@ -150,22 +160,6 @@ whichever it finds (the environment variable wins).
 
 ---
 
-## Option B — Non-Flux Direct Helm Install (legacy)
-
-If you don't want GitOps and prefer direct Helm installs, the old bootstrap path still works:
-
-```bash
-kind create cluster --name kagent
-# Edit manifests/secrets/kagent-secrets.yaml with keys
-helm upgrade --install kagent-crds oci://ghcr.io/kagent-dev/kagent/helm/kagent-crds \
-  --version 0.10.0-rc3 --namespace kagent-system --create-namespace --wait
-helm upgrade --install kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent \
-  --version 0.10.0-rc3 --namespace kagent --values helm/kagent-values.yaml --wait --timeout 10m
-kubectl apply -f manifests/
-```
-
----
-
 ## Verifying the Installation
 
 ```bash
@@ -183,12 +177,17 @@ kubectl -n kagent get agents
 kubectl -n kagent get modelconfigs
 kubectl -n kagent get remotemcpservers
 
+# Check the AgentHarness and its backing substrate objects
+kubectl -n kagent get agentharness,workerpool,actortemplate
+kubectl -n ate-system get pods
+
 # Check the kagent UI
 kubectl -n kagent port-forward --address 0.0.0.0 svc/kagent-ui 8080:8080
 # Then open http://<server-ip>:8080 in your browser
-
-  Be careful not to commit your API keys to git (they are already committed as placeholders).
 ```
+
+No API keys live in this repo — every provider credential is an ExternalSecret
+resolved from Bitwarden at runtime.
 
 ---
 
@@ -210,114 +209,6 @@ Substrate and the `hermes-shell` AgentHarness are deployed by Flux from
 `flux/apps/base/substrate/` and `flux/apps/base/kagent/agent-harnesses/`.
 Substrate lives in the `ate-system` namespace — its API group is `ate.dev`, so
 `ate-*` / `atelet` / `atenet` are the real upstream names, not truncated ones.
-
-### Substrate does NOT work on a vanilla Kind cluster
-
-Several prerequisites are easy to miss. In `auth.mode: mtls` the first two fail
-the same silent way — every substrate pod sits in `ContainerCreating` with:
-
-```
-MountVolume.SetUp failed for volume "podidentity" :
-  [credential bundle is not issued yet,
-   combination of signerName and labelSelector matched zero ClusterTrustBundles]
-```
-
-**1. Cluster feature gates (`kind-config.yaml`) — only in `auth.mode: mtls`.** Substrate mounts pod
-identity as projected `podCertificate` + `clusterTrustBundle` volumes, issued by
-its own `podcertificate-controller`. That controller talks *exclusively* to
-`certificates.k8s.io/v1beta1`, which Kubernetes v1.37 does not serve unless
-asked. `kind-config.yaml` enables:
-
-| Setting | Why |
-|---|---|
-| `featureGates: ClusterTrustBundle` | the CTB API objects |
-| `featureGates: ClusterTrustBundleProjection` | the projected volume type |
-| `featureGates: PodCertificateRequest` | per-pod cert issuance |
-| `runtimeConfig: "certificates.k8s.io/v1beta1": "true"` | the only group-version podcertcontroller uses |
-| `serializeImagePulls: false` | substrate pulls several hundred MB onto one node |
-
-These **cannot be added to a running kind cluster** — the cluster must be
-recreated. `bootstrap.sh` passes the config automatically; it also enables
-`proxy_arp`/`proxy_ndp` on the node, which gVisor sandboxes need for
-pod-to-pod traffic.
-
-Verify:
-
-```bash
-kubectl get --raw /apis/certificates.k8s.io | grep v1beta1
-```
-
-**2. CA bootstrap secrets (`hack/substrate-bootstrap.sh`) — only in `auth.mode: mtls`.** The substrate chart
-*mounts* six things it never *creates*. They hold CA private keys, so they are
-deliberately not in git and not templated — upstream generates them
-imperatively with `kubectl ate admin`:
-
-| Object | Namespace | Purpose |
-|---|---|---|
-| `service-dns-ca-pool` | `podcertificate-controller-system` | signs `servicedns.podcert.ate.dev/identity` |
-| `pod-identity-ca-pool` | `podcertificate-controller-system` | signs `podidentity.podcert.ate.dev/identity` |
-| `actor-id-ca-pool` | `ate-system` | actor mTLS identity CA (root + signing key) |
-| `actor-id-jwt-pool` | `ate-system` | actor identity JWT authority |
-| `actor-id-ca-certs` | `ate-system` | cert-only root, for the egress gateway |
-| `ate-api-authentication` (ConfigMap) | `ate-system` | ateapi JWT provider config |
-
-`hack/substrate-bootstrap.sh` creates all of them and is idempotent — an
-existing secret is left alone, so re-running will not rotate a CA out from
-under a live cluster (use `--force` to regenerate). It runs as step 0d of
-`bootstrap.sh`, and can be re-run standalone at any time.
-
-It needs `kubectl-ate`, which has no published binary or image and must be
-built from source. With no Go toolchain assumed on the host, the script builds
-it in a `golang:1.27` container into `./bin/kubectl-ate` (gitignored, cached).
-
-Verify:
-
-```bash
-kubectl get clustertrustbundles          # expect the two podcert.ate.dev signers
-kubectl -n ate-system get pods
-```
-
-**3. RBAC: `use` on the podcert signers.** The chart grants its own controller
-`sign`/`attest` on the two `podcert.ate.dev` signers but grants **no workload
-`use`**. Kubernetes silently strips `signerName` — and the whole projected-volume
-source — from a `podCertificate`/`clusterTrustBundle` volume unless the identity
-submitting the pod template holds `use` on that exact signer. No error, no event;
-the pods just come up with empty cert projections.
-`flux/apps/base/substrate/substrate-operator/rbac-podcert-signer-use.yaml`
-grants it to the six `ate-system` ServiceAccounts.
-
-Note `kubectl auth can-i` mis-parses signer names containing `/` and always
-reports `no`. Use a raw SubjectAccessReview:
-
-```bash
-kubectl create --raw /apis/authorization.k8s.io/v1/subjectaccessreviews -f - <<'EOF'
-{"apiVersion":"authorization.k8s.io/v1","kind":"SubjectAccessReview","spec":{
-  "user":"system:serviceaccount:ate-system:default",
-  "resourceAttributes":{"group":"certificates.k8s.io","resource":"signers",
-    "name":"servicedns.podcert.ate.dev/identity","verb":"use"}}}
-EOF
-```
-
-**4. Privileged PSS on both `ate-system` and `kagent`.** `atelet` runs
-`privileged: true`, and the `ateom-gvisor` worker pods — which live in the
-**`kagent`** namespace, not `ate-system` — request `SYS_ADMIN`, `NET_ADMIN`,
-`SYS_PTRACE` and `appArmorProfile: Unconfined`. `SYS_ADMIN` alone is rejected
-under `restricted` *and* `baseline`, so both namespaces use the
-`namespace-privileged` infra component. Missing this on `kagent` means an
-AgentHarness never gets a worker to run on.
-
-**5. `ateomImage` must match the substrate chart version.** `ate-controller` and
-`ateom-gvisor` are components of one release and their worker CLI flags are not a
-cross-version contract — a mismatch crash-loops every worker with `unknown flag`.
-Both are pinned to `0.0.21` / `v0.0.21` here; bump them together.
-
-**6. `user.max_user_namespaces` must be non-zero.** gVisor's `runsc` creates a
-user namespace during sandbox setup. Kind inherits the Docker host's value, so
-check the host:
-
-```bash
-cat /proc/sys/user/max_user_namespaces   # 0 breaks runsc with `exit status 128`
-```
 
 ### The kagent <-> substrate version pairing is load-bearing
 
@@ -368,11 +259,14 @@ requirements substantially. This repo uses **jwt**:
 | Key material | chart self-bootstraps `ateapi-tls`, `session-id-jwt-pool`, `session-id-ca-pool` | manual |
 | Secret naming | `session-id-*` | `service-dns-ca-pool`, `pod-identity-ca-pool`, `session-id-*` |
 
-The kind feature gates and `hack/substrate-bootstrap.sh` are therefore
-**not needed** in the current configuration. Both are kept because they cost
-nothing and are required if you ever switch to mtls — but note the script still
-targets 0.0.21's `actor-id-*` naming and needs updating to 0.0.9's
-`session-id-*` naming before it would work.
+Switching to `mtls` is therefore not just a value change: you would need the
+`kind-config.yaml` feature gates (already present) **and** to create
+`service-dns-ca-pool`, `pod-identity-ca-pool` and the `session-id-*` pools
+yourself with `kubectl ate admin make-ca-pool` / `make-jwt-pool` from the
+[substrate repo](https://github.com/agent-substrate/substrate), whose
+`hack/install-ate.sh` is the reference for those commands. There is no script
+for that here — the one this repo used to carry targeted 0.0.21's `actor-id-*`
+naming and was deleted rather than left to rot.
 
 0.0.9 also uses **valkey rather than postgres**, so the 1-CPU postgres request
 is gone and the chart declares no CPU requests at all.
@@ -495,28 +389,26 @@ Docs: [Agent Substrate](https://kagent.dev/docs/kagent/concepts/agent-substrate/
 ```
 kind-kagent/
 ├── README.md
-├── bootstrap.sh                    # Flux Operator bootstrap
-├── kind-config.yaml                # REQUIRED for substrate: feature gates + v1beta1
-├── hack/
-│   └── substrate-bootstrap.sh      # substrate CA pools / JWT authority / API auth
-├── bin/                            # gitignored: locally built kubectl-ate
-├── .gitignore
-├── helm/
-│   └── kagent-values.yaml         # Chart values (legacy direct-helm path)
-├── manifests/                      # Legacy direct-apply manifests (migrated to flux/)
-│   ├── namespace.yaml
-│   ├── secrets/
-│   │   └── kagent-secrets.yaml
-│   ├── providers/                  # ModelConfigs
-│   ├── agents/
-│   │   └── k8s-agents.yaml
-│   └── mcps/
-│       └── github-mcp.yaml
-├── flux/                           # Canonical GitOps structure
-│   ├── CLAUDE.md
-│   ├── infra/                      # Namespace components
-│   ├── clusters/dev/               # Flux entrypoint
-│   ├── apps/base/kube-ops/external-secrets/  # ESO operator + Bitwarden store
-  ├── apps/base/kagent/                     # kagent manifests
-│   └── apps/dev/kagent/            # Flux Kustomizations
+├── bootstrap.sh                    # Kind cluster + Flux Operator bootstrap
+├── kind-config.yaml                # Kind cluster config (see note below)
+├── .gitignore                      # ignores .bitwarden-token and bin/
+└── flux/                           # canonical GitOps tree — everything else lives here
+    ├── CLAUDE.md
+    ├── clusters/dev/               # Flux entrypoint: FluxInstance + root Kustomization
+    ├── infra/                      # namespace components (restricted / privileged PSS)
+    ├── apps/base/                  # actual manifests
+    │   ├── kagent/{crds,operator,secrets,providers,mcps,agents,agent-harnesses}
+    │   ├── substrate/{substate-crds,substrate-operator}
+    │   └── kube-ops/{cert-manager,external-secrets}
+    └── apps/dev/                   # Flux Kustomizations (ks.yaml per component)
+        ├── kagent/
+        ├── substrate/
+        └── kube-ops/
 ```
+
+`kind-config.yaml` is not strictly required in the current `auth.mode: jwt`
+setup — it carries the `ClusterTrustBundle` / `PodCertificateRequest` feature
+gates that only `mtls` needs. It is kept because those gates **cannot be added
+to a running kind cluster**, so dropping them would mean rebuilding the cluster
+to switch modes. It also sets parallel image pulls, which substrate's image
+pulls benefit from.

@@ -112,17 +112,17 @@ else
 fi
 
 # ==============================================================================
-# Step 0d: Agent Substrate bootstrap — NOT NEEDED in jwt mode
+# Agent Substrate needs no bootstrap step
 # ==============================================================================
 # substrate runs with auth.mode=jwt (see
 # flux/apps/base/substrate/substrate-operator/helmrelease.yaml). In jwt mode the
-# chart bootstraps its own key material and does not render the
-# podcertificate-controller, so there are no CA pools to create out of band.
+# chart generates its own key material (ateapi-tls, session-id-jwt-pool,
+# session-id-ca-pool) and does not render the podcertificate-controller, so
+# there are no CA pools to create out of band. Flux installs substrate with no
+# imperative help.
 #
-# hack/substrate-bootstrap.sh is kept for the mtls path only. It still targets
-# 0.0.21's actor-id-* secret naming and would need updating to 0.0.9's
-# session-id-* naming before use. Run it manually if you switch to mtls:
-#   ./hack/substrate-bootstrap.sh
+# auth.mode=mtls is the mode that needs CA pools created by hand, and the kind
+# feature gates in kind-config.yaml. See the README before switching.
 
 # ==============================================================================
 # Step 1: Install Flux Operator
